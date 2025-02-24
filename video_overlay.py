@@ -62,9 +62,46 @@ def detect_lines(frame):
 
     return frame
 
+def overlay_image(background, overlay, x, y):
+    """Overlays a transparent image (overlay) onto a background at (x, y)."""
+    overlay_h, overlay_w = overlay.shape[:2]
 
-# Video processing code
-input_video_path = "/Users/pl1004218/Desktop/video_detection.MP4"
+    # Ensure overlay fits in the background frame
+    if x + overlay_w > background.shape[1] or y + overlay_h > background.shape[0]:
+        return background
+
+    # Extract the alpha channel (transparency mask)
+    b, g, r, a = cv2.split(overlay)
+
+    # Normalize alpha to range 0-1
+    alpha = a / 255.0
+
+    # Select region of interest (ROI) on the background
+    roi = background[y:y+overlay_h, x:x+overlay_w]
+
+    # Blend images using the alpha mask
+    for c in range(3):  # Loop through color channels (B, G, R)
+        roi[:, :, c] = (1 - alpha) * roi[:, :, c] + alpha * overlay[:, :, c]
+
+    # Put blended ROI back into the original frame
+    background[y:y+overlay_h, x:x+overlay_w] = roi
+    return background
+
+# video and image paths
+input_video_path = "/Users/profasarwat/Desktop/Video Detection Sanya (1).MP4"
+arrow_image_path = "/Users/profasarwat/Desktop/arrow-png-image.png"  # Ensure this is a transparent PNG
+
+# Load the arrow image
+arrow = cv2.imread(arrow_image_path, cv2.IMREAD_UNCHANGED)  # Load with alpha channel
+
+if arrow is None:
+    print("Error: Could not load arrow image.")
+    exit()
+
+# Resize the arrow if needed
+arrow = cv2.resize(arrow, (80, 80))  # Adjust size as needed
+
+# Open video file
 video = cv2.VideoCapture(input_video_path)
 
 if not video.isOpened():
@@ -88,6 +125,9 @@ while True:
 
     # Process the frame
     processed_frame = detect_lines(frame)
+
+    # Overlay the arrow in the top-left corner
+    processed_frame = overlay_image(processed_frame, arrow, 20, 20)  # Adjust position as needed
 
     # Display the processed frame
     cv2.imshow("Video Frame with Line Detection", processed_frame)
