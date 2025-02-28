@@ -2,64 +2,50 @@ import cv2
 import numpy as np
 
 def detect_lines(frame):
-    # define ROI box
     height, width = frame.shape[:2]
-    roi_top_left = (int(width * 0.20), int(height * 0.75))
-    roi_bottom_right = (int(width * 0.7), int(height * 1.0))
-
-    # Draw the ROI box; in color yellow
-    cv2.rectangle(frame, roi_top_left, roi_bottom_right, (0, 255, 255), 2)
-
-    # use ROI for line detection; only detect what's in there
-    roi = frame[roi_top_left[1]:roi_bottom_right[1], roi_top_left[0]:roi_bottom_right[0]]
-
-    # Convert to grayscale
+    
+    # Define a triangular ROI (adjustable)
+    triangle_vertices = np.array([
+        (int(width * 0.20), height),  # Bottom-left
+        (int(width * 0.85), height),  # Bottom-right
+        (int(width * 0.5), int(height * 0.75))  # Top (apex)
+    ], np.int32)
+    
+    # Create mask for the triangular ROI
+    mask = np.zeros_like(frame, dtype=np.uint8)
+    cv2.fillPoly(mask, [triangle_vertices], (255, 255, 255))
+    roi = cv2.bitwise_and(frame, mask)
+    
+    # Convert to grayscale and apply edge detection
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-
-    # turn into binary and blur
-    _, binary = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY_INV)
-    blurred = cv2.GaussianBlur(binary, (5, 5), 0)
-
-    # Edge detection using Canny edge detection
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(blurred, 50, 150)
-
-    # Detect contours (to better isolate thick lines)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    lines = []
-    for contour in contours:
-        # Filter small noise
-        if cv2.contourArea(contour) > 500:
-            [vx, vy, x, y] = cv2.fitLine(contour, cv2.DIST_L2, 0, 0.01, 0.01)
-            slope = vy / (vx + 1e-6)
-            lines.append((vx, vy, x, y, slope))
-
-    if len(lines) >= 2:
-        # Sort lines by horizontal position (x) or vertical position (y) dynamically
-        lines = sorted(lines, key=lambda l: (l[2] if abs(l[4]) < 1 else l[3]))  # Use x for slanted, y for vertical
-
-        # Select two most prominent lines
-        line1 = lines[0]
-        line2 = lines[1]
-
-        # Draw detected lines in the ROI
-        for vx, vy, x, y, slope in [line1, line2]:
-            x1, y1 = int(x - 1000 * vx) + roi_top_left[0], int(y - 1000 * vy) + roi_top_left[1]
-            x2, y2 = int(x + 1000 * vx) + roi_top_left[0], int(y + 1000 * vy) + roi_top_left[1]
-            cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green
-
-        # Compute centerline based on line orientations
-        if abs(line1[4]) > 1 and abs(line2[4]) > 1:  # Mostly vertical lines
-            # Average x-coordinates for vertical centerline
-            center_x = int((line1[2] + line2[2]) // 2) + roi_top_left[0]
-            midline = [(center_x, roi_top_left[1]), (center_x, roi_bottom_right[1])]
-        else:  # Slanted or horizontal lines
-            # Average y-coordinates for horizontal centerline
-            center_y = int((line1[3] + line2[3]) // 2) + roi_top_left[1]
-            midline = [(roi_top_left[0], center_y), (roi_bottom_right[0], center_y)]
-
-        # Draw the centerline
-        cv2.line(frame, tuple(map(int, midline[0])), tuple(map(int, midline[1])), (255, 0, 0), 2)  # Blue for centerline
-
+    
+    # Hough Transform to detect lane lines
+    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 50, minLineLength=50, maxLineGap=150)
+    left_lines, right_lines = [], []
+    
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            slope = (y2 - y1) / (x2 - x1 + 1e-6)
+            if slope < -0.3:  # Left lane
+                left_lines.append((x1, y1, x2, y2))
+            elif slope > 0.3:  # Right lane
+                right_lines.append((x1, y1, x2, y2))
+    
+    # Draw lane lines
+    for line in left_lines + right_lines:
+        x1, y1, x2, y2 = line
+        cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
+    
+    # Compute and draw midline
+    if left_lines and right_lines:
+        left_x = np.mean([line[0] for line in left_lines])
+        right_x = np.mean([line[2] for line in right_lines])
+        mid_x = int((left_x + right_x) / 2)
+        cv2.line(frame, (mid_x, height), (mid_x, int(height * 0.5)), (255, 0, 0), 2)  # Midline in blue
+    
     return frame
 
 def overlay_image(background, overlay, x, y):
